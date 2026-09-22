@@ -149,6 +149,16 @@ header.top{
 .apply:active{transform:scale(.97)}
 .catrow{display:grid; grid-template-columns:1fr auto; gap:6px 12px; padding:10px 0; border-bottom:.5px solid var(--line)}
 .catrow:last-child{border-bottom:0}
+.catrow.sw3{grid-template-columns:1fr auto auto; align-items:center}
+.catrow.off .catname, .catrow.off .catamt{opacity:.45}
+.catrow.off .catamt{text-decoration:line-through}
+/* iOS-style on/off switch */
+.sw{position:relative; width:38px; height:23px; flex:none; border:0; border-radius:980px; background:var(--track); padding:0; transition:background .2s}
+.sw::after{content:""; position:absolute; top:2px; left:2px; width:19px; height:19px; border-radius:50%; background:#fff;
+  box-shadow:0 1px 3px rgba(0,0,0,.25); transition:transform .2s cubic-bezier(.22,1,.36,1)}
+.sw[aria-checked="true"]{background:var(--in)}
+.sw[aria-checked="true"]::after{transform:translateX(15px)}
+@media (prefers-reduced-motion:reduce){ .sw, .sw::after{transition:none} }
 .catname{display:flex; align-items:center; gap:9px; font-size:14.5px}
 .dot{width:10px; height:10px; border-radius:50%; flex:none}
 .catamt{font-variant-numeric:tabular-nums; font-size:14.5px; font-weight:500}
@@ -182,6 +192,11 @@ th{
 }
 td{padding:9px 10px 9px 0; border-bottom:.5px solid var(--line); vertical-align:middle}
 tbody tr:hover{background:var(--surface-2)}
+tr.ex td:not(:last-child){opacity:.42}
+tr.ex td.r:nth-child(4){text-decoration:line-through}
+.exb{background:var(--surface-2); border:0; border-radius:980px; padding:5px 11px; font-size:12.5px; font-weight:500; color:var(--ink); white-space:nowrap}
+.exb:hover{background:var(--track)}
+.vh{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0)}
 td.r{text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap}
 td.d{color:var(--muted); white-space:nowrap; font-size:13px; font-variant-numeric:tabular-nums}
 .pill{
@@ -244,7 +259,7 @@ footer{margin-top:28px; font-size:12.5px; color:var(--muted); text-align:center}
       <div>
         <section class="card">
           <div class="cardhead"><h2>Spending by category</h2><span class="cap" id="catcap"></span></div>
-          <div class="sub-cap">Type a monthly budget at the end of a row and the bar starts measuring against it.</div>
+          <div class="sub-cap">Type a monthly budget at the end of a row and the bar starts measuring against it. Switch a category off to leave it out of every total.</div>
           <div id="donut"></div>
           <div id="cats"></div>
         </section>
@@ -282,13 +297,19 @@ footer{margin-top:28px; font-size:12.5px; color:var(--muted); text-align:center}
     </div>
     <section class="card">
       <div class="cardhead"><h2>Transactions</h2><span class="cap" id="txcap"></span></div>
-      <div class="sub-cap">Wrong category? Change it in the row and that merchant is remembered everywhere.</div>
+      <div class="sub-cap">Wrong category? Change it in the row and that merchant is remembered everywhere. Moving money to your own savings account? Pick <b>Savings &amp; invest</b> to count it as put aside, net of what you move back, or <b>Own transfer</b> to leave it out of every total.</div>
       <div class="filters">
         <input id="q" placeholder="Search merchant or text…" aria-label="Search transactions">
         <select class="ctl" id="fcat" aria-label="Filter by category"></select>
+        <select class="ctl" id="sort" aria-label="Sort transactions">
+          <option value="" disabled hidden>Sort</option>
+          <option value="new" data-l="Newest first">Newest first</option><option value="old" data-l="Oldest first">Oldest first</option>
+          <option value="out" data-l="Largest spend first">Largest spend first</option><option value="in" data-l="Largest income first">Largest income first</option>
+          <option value="az" data-l="Merchant A–Z">Merchant A–Z</option>
+        </select>
       </div>
       <div class="scroll"><table><thead><tr>
-        <th>Date</th><th>Merchant</th><th>Category</th><th style="text-align:right">Amount</th><th style="text-align:right">Balance</th>
+        <th>Date</th><th>Merchant</th><th>Category</th><th style="text-align:right">Amount</th><th style="text-align:right">Balance</th><th><span class="vh">Exclude</span></th>
       </tr></thead><tbody id="rows"></tbody></table></div>
     </section>
     <footer>Your data never leaves this browser · <span id="count"></span></footer>
@@ -324,6 +345,7 @@ var CATS = [
 ];
 var OTHER = ["Other", null, "--c10"];
 var SAVINGS = "Savings & invest";
+var OWN = "Own transfer"; /* moves between your own accounts: left out of every total */
 var INCOMEISH = ["Income"]; /* transfers between your own accounts are not income */
 var GROUPS = [
   ["Food & drink",    ["Groceries", "Eating out"],                                                   "--c3"],
@@ -346,7 +368,7 @@ function groupTotals(byCat){
 }
 
 var FIXED_RE = /^(Autogiro|Betalning|Open Banking)/i;
-var ALL_CAT_NAMES = CATS.map(function(c){ return c[0]; }).concat([OTHER[0]]);
+var ALL_CAT_NAMES = CATS.map(function(c){ return c[0]; }).concat([OTHER[0], OWN]);
 
 var kr = function(n){ return (n < 0 ? "−" : "") + Math.round(Math.abs(n)).toLocaleString("sv-SE") + " kr"; };
 var kr2 = function(n){ return (n < 0 ? "−" : "") + Math.abs(n).toLocaleString("sv-SE", {minimumFractionDigits:2, maximumFractionDigits:2}); };
@@ -394,8 +416,10 @@ function parseCSV(text){
 
 /* ---------- state ---------- */
 var LS = "kontokoll.v1";
-var S = {tx:[], budgets:{}, overrides:{}};
+var S = {tx:[], budgets:{}, overrides:{}, excluded:{}, offCats:{}};
 try { Object.assign(S, JSON.parse(localStorage.getItem(LS) || "{}")); } catch(e){}
+S.excluded = S.excluded || {};
+S.offCats = S.offCats || {};
 function save(){
   try { localStorage.setItem(LS, JSON.stringify(S)); } catch(e){}
   push();
@@ -437,7 +461,9 @@ function mergeState(local, remote){
   return {
     tx: tx,
     budgets: Object.assign({}, remote.budgets, local.budgets),
-    overrides: Object.assign({}, remote.overrides, local.overrides)
+    overrides: Object.assign({}, remote.overrides, local.overrides),
+    excluded: Object.assign({}, remote.excluded, local.excluded),
+    offCats: Object.assign({}, remote.offCats, local.offCats)
   };
 }
 
@@ -498,17 +524,20 @@ function catColor(n){
   var c = CATS.filter(function(x){ return x[0] === n; })[0] || OTHER;
   return "var(" + c[2] + ")";
 }
-function isSpend(t){ return t.amount < 0 && catOf(t) !== SAVINGS; }
+/* left out of every total: excluded one by one, or the whole counterparty marked as an own transfer */
+function ignored(t){ var c = catOf(t); return !!S.excluded[t.id] || c === OWN || !!S.offCats[c]; }
+function isSpend(t){ return t.amount < 0 && !ignored(t) && catOf(t) !== SAVINGS; }
 function monthName(m){
   return new Date(+m.slice(0, 4), +m.slice(5, 7) - 1, 1).toLocaleDateString("en-GB", {month:"long", year:"numeric"});
 }
 function summarize(list){
   var spend = 0, income = 0, saved = 0, byCat = {};
   list.forEach(function(t){
+    if (ignored(t)) return;
     var c = catOf(t);
     if (isSpend(t)) { spend -= t.amount; byCat[c] = (byCat[c] || 0) - t.amount; }
     else if (t.amount > 0 && INCOMEISH.indexOf(c) >= 0) income += t.amount;
-    else if (t.amount < 0 && c === SAVINGS) saved -= t.amount;
+    else if (c === SAVINGS) saved -= t.amount; /* net: money moved back out of savings is subtracted */
   });
   return {spend:spend, income:income, saved:saved, byCat:byCat};
 }
@@ -643,6 +672,17 @@ function render(){
   var groups = groupTotals(A.byCat);
   if (focusGroup && !groups.some(function(g){ return g[0] === focusGroup; })) focusGroup = null;
   var shown = focusGroup ? cats.filter(function(c){ return groupOf(c[0]) === focusGroup; }) : cats;
+  /* switched-off categories are out of every total, but stay listed (dimmed) so they can be switched back on */
+  var offSum = {};
+  list.forEach(function(t){
+    var c = catOf(t);
+    if (S.offCats[c] && t.amount < 0 && c !== SAVINGS && !S.excluded[t.id]) offSum[c] = (offSum[c] || 0) - t.amount;
+  });
+  var offShown = Object.keys(offSum).filter(function(n){ return !focusGroup || groupOf(n) === focusGroup; })
+    .sort(function(a, b){ return offSum[b] - offSum[a]; });
+  var sw = function(n, on){
+    return '<button class="sw" type="button" role="switch" aria-checked="' + on + '" data-cat="' + esc(n) + '" aria-label="Count ' + esc(n) + ' in the totals"></button>';
+  };
   var shownSum = shown.reduce(function(t, c){ return t + c[1]; }, 0);
   $("catcap").textContent = focusGroup
     ? kr(shownSum) + " in " + focusGroup
@@ -659,13 +699,22 @@ function render(){
     var pct = b ? v / b * 100 : v / max * 100;
     var meta = Math.round(v / A.spend * 100) + "% of spending" +
       (b ? (v > b ? ' · <span class="over">' + kr(v - b) + " over</span>" : " · " + kr(b - v) + " left") : "");
-    return '<div class="catrow">' +
+    return '<div class="catrow sw3">' +
       '<div class="catname"><span class="dot" style="background:' + catColor(n) + '"></span>' + esc(n) + '</div>' +
-      '<div class="catamt">' + kr(v) + '</div>' +
+      '<div class="catamt">' + kr(v) + '</div>' + sw(n, true) +
       '<div class="track"><div class="fill" style="width:' + Math.min(100, pct) + '%;background:' + (b && v > b ? "var(--out)" : catColor(n)) + '"></div></div>' +
       '<div class="catmeta"><span>' + meta + '</span>' +
       '<span>budget <input class="bud" data-cat="' + esc(n) + '" value="' + (b || "") + '" placeholder="set" aria-label="Monthly budget for ' + esc(n) + '"></span></div></div>';
+  }).join("") + offShown.map(function(n){
+    return '<div class="catrow sw3 off">' +
+      '<div class="catname"><span class="dot" style="background:' + catColor(n) + '"></span>' + esc(n) + '</div>' +
+      '<div class="catamt">' + kr(offSum[n]) + '</div>' + sw(n, false) +
+      '<div class="catmeta"><span>Switched off, not counted in any total</span></div></div>';
   }).join("") || '<div class="cap">No spending recorded this month.</div>';
+  /* false (not delete) when switched back on, so the choice also wins when syncing */
+  Array.prototype.forEach.call(document.querySelectorAll(".sw"), function(b){
+    b.onclick = function(){ S.offCats[b.dataset.cat] = b.getAttribute("aria-checked") === "true"; save(); render(); };
+  });
   if (focusGroup && $("showall")) $("showall").onclick = function(){ focusGroup = null; render(); };
   Array.prototype.forEach.call(document.querySelectorAll(".bud"), function(i){
     i.onchange = function(e){
@@ -676,7 +725,7 @@ function render(){
   });
 
   /* fixed costs */
-  var fixed = list.filter(function(t){ return t.amount < 0 && FIXED_RE.test(t.rubrik) && catOf(t) !== SAVINGS; })
+  var fixed = list.filter(function(t){ return t.amount < 0 && FIXED_RE.test(t.rubrik) && catOf(t) !== SAVINGS && !ignored(t); })
                   .sort(function(a, b){ return a.amount - b.amount; });
   var fixedSum = fixed.reduce(function(s, t){ return s - t.amount; }, 0);
   $("fixcap").textContent = kr(fixedSum) + (A.income ? " · " + Math.round(fixedSum / A.income * 100) + "% of income" : "");
@@ -732,20 +781,37 @@ function render(){
   var rows = list.filter(function(t){
     return (!q || t.rubrik.toLowerCase().indexOf(q) >= 0) && (!fc || catOf(t) === fc);
   });
-  $("txcap").textContent = rows.length + " in " + monthName(m);
+  var nEx = list.filter(ignored).length;
+  var SORTS = {
+    new: function(a, b){ return a.date < b.date ? 1 : a.date > b.date ? -1 : 0; },
+    old: function(a, b){ return a.date < b.date ? -1 : a.date > b.date ? 1 : 0; },
+    out: function(a, b){ return a.amount - b.amount; },
+    in:  function(a, b){ return b.amount - a.amount; },
+    az:  function(a, b){ return a.merchant.localeCompare(b.merchant, "sv"); }
+  };
+  rows = rows.slice().sort(SORTS[sortBy]);
+  $("txcap").textContent = rows.length + " in " + monthName(m) + (nEx ? " · " + nEx + " left out of the totals" : "");
   $("rows").innerHTML = rows.map(function(t){
-    var c = catOf(t);
-    return "<tr>" +
+    var c = catOf(t), off = ignored(t), one = !!S.excluded[t.id];
+    return '<tr' + (off ? ' class="ex"' : "") + ">" +
       '<td class="d">' + t.date.slice(5) + "</td>" +
       "<td>" + esc(t.merchant) + (FIXED_RE.test(t.rubrik) ? '<span class="badge">fixed</span>' : "") + "</td>" +
       '<td><select class="pill" data-m="' + esc(t.merchant.toLowerCase()) + '" aria-label="Category">' +
         ALL_CAT_NAMES.map(function(n){ return "<option" + (n === c ? " selected" : "") + ">" + esc(n) + "</option>"; }).join("") +
       "</select></td>" +
       '<td class="r ' + (t.amount > 0 ? "up" : "") + '">' + kr2(t.amount) + "</td>" +
-      '<td class="r" style="color:var(--muted)">' + (t.balance === null ? "" : kr2(t.balance)) + "</td></tr>";
+      '<td class="r" style="color:var(--muted)">' + (t.balance === null ? "" : kr2(t.balance)) + "</td>" +
+      '<td class="r">' + (c === OWN ? '<span class="cap">own transfer</span>' :
+        S.offCats[c] ? '<span class="cap">category off</span>' :
+        '<button class="exb" type="button" data-id="' + esc(t.id) + '" aria-pressed="' + one + '">' + (one ? "Include" : "Exclude") + "</button>") +
+      "</td></tr>";
   }).join("");
   Array.prototype.forEach.call(document.querySelectorAll(".pill"), function(s){
     s.onchange = function(e){ S.overrides[e.target.dataset.m] = e.target.value; save(); render(); };
+  });
+  /* false (not delete) on re-include, so the choice also wins when syncing with another device */
+  Array.prototype.forEach.call(document.querySelectorAll(".exb"), function(b){
+    b.onclick = function(){ S.excluded[b.dataset.id] = !S.excluded[b.dataset.id]; save(); render(); };
   });
 }
 
@@ -998,7 +1064,7 @@ function insights(A, B, x){
   else
     push("try this", "", "Set a budget on your top two categories and the bar turns red the moment you cross it.");
 
-  if (!A.saved && A.income)
+  if (A.saved <= 0 && A.income)
     push("saving", "", "Nothing went to savings this month. A standing transfer of <b>" +
       kr(Math.round(A.income * 0.1 / 100) * 100) + "</b> on payday is the change that works without willpower.");
 
@@ -1019,9 +1085,19 @@ $("auth").onclick = async function(){
 $("month").onchange = render;
 $("q").oninput = render;
 $("fcat").onchange = render;
+/* the control always reads "Sort"; the list marks the current order with a tick */
+var sortBy = "new";
+function markSort(){
+  var sel = $("sort");
+  Array.prototype.forEach.call(sel.options, function(o){ if (o.value) o.textContent = (o.value === sortBy ? "✓ " : "") + o.dataset.l; });
+  sel.value = "";
+  sel.setAttribute("aria-label", "Sort transactions, currently " + sel.querySelector('[value="' + sortBy + '"]').dataset.l);
+}
+$("sort").onchange = function(){ if ($("sort").value) sortBy = $("sort").value; markSort(); render(); };
+markSort();
 $("clear").onclick = function(){
   if (confirm("Remove all imported transactions from this browser?")){
-    S = {tx:[], budgets:{}, overrides:{}}; save(); render();
+    S = {tx:[], budgets:{}, overrides:{}, excluded:{}, offCats:{}}; save(); render();
   }
 };
 ["dragover", "dragenter"].forEach(function(ev){
@@ -1050,6 +1126,24 @@ document.addEventListener("drop", function(e){ if (e.dataTransfer && e.dataTrans
   var s = summarize(t);
   console.assert(s.spend === 202.37 && s.income === 21000 && s.saved === 2000,
     "summary wrong: " + JSON.stringify(s));
+  var keepEx = S.excluded, keepOv = S.overrides, keepOff = S.offCats; /* the tests run after the saved state loads: put it back */
+  S.excluded = {}; S.overrides = {}; S.offCats = {};
+  S.excluded[t[0].id] = true;
+  console.assert(summarize(t).spend === 0 && summarize(t).income === 21000, "excluded transaction leaves the totals");
+  S.excluded = {};
+  console.assert(summarize(t).spend === 202.37, "re-included transaction counts again");
+  var own = {}; own[t[2].merchant.toLowerCase()] = OWN;
+  S.overrides = own;
+  console.assert(summarize(t).saved === 0 && !isSpend(t[2]), "own transfer leaves every total");
+  var back = {amount: 500, rubrik: t[2].rubrik, merchant: t[2].merchant, id: "back", date: t[2].date};
+  var sv = {}; sv[t[2].merchant.toLowerCase()] = SAVINGS; S.overrides = sv;
+  console.assert(summarize(t.concat([back])).saved === 1500 && summarize([back]).income === 0,
+    "savings are net: money moved back is subtracted, and is not income");
+  S.overrides = {}; S.offCats = {Groceries: true};
+  console.assert(summarize(t).spend === 0 && summarize(t).income === 21000, "switched-off category leaves the totals");
+  S.offCats = {Groceries: false};
+  console.assert(summarize(t).spend === 202.37, "switched back on counts again");
+  S.excluded = keepEx; S.overrides = keepOv; S.offCats = keepOff;
   console.assert(median([3, 1, 2]) === 2 && median([4, 1, 2, 3]) === 2.5, "median");
   var merged = mergeState(
     {tx:[t[0]], budgets:{Groceries:1000}, overrides:{}},
