@@ -1,4 +1,5 @@
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kontokoll</title>
 <script>
   try { if (localStorage.getItem("kk-theme") === "dark") document.documentElement.dataset.theme = "dark"; } catch (e) {}
@@ -185,7 +186,7 @@ header.top{
 .ins b{font-weight:600; font-variant-numeric:tabular-nums}
 
 table{width:100%; border-collapse:collapse; font-size:14px}
-.scroll{overflow-x:auto}
+.scroll{overflow-x:auto; position:relative} /* relative: keeps the hidden "Exclude" label inside the scroll box, or it stretches the page */
 th{
   text-align:left; font-size:12px; font-weight:600; color:var(--muted);
   padding:0 10px 9px 0; border-bottom:.5px solid var(--line); white-space:nowrap;
@@ -214,6 +215,31 @@ td.d{color:var(--muted); white-space:nowrap; font-size:13px; font-variant-numeri
 footer{margin-top:28px; font-size:12.5px; color:var(--muted); text-align:center}
 .hide{display:none}
 @media (prefers-reduced-motion:reduce){*{transition:none !important}}
+/* Phones: the four totals two by two, tighter margins, and the transactions table
+   loses the running balance so the rest fits without scrolling sideways. */
+@media (max-width:600px){
+  .wrap{padding:0 14px 48px}
+  .top-in{padding:10px 58px 10px 14px}
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px}
+  .kpi{padding:14px 15px}
+  .kpi .val{font-size:22px}
+  .kpi .sub{font-size:12px}
+  .card{padding:17px 16px}
+  .drop{padding-left:20px; padding-right:20px}
+  /* Each transaction becomes a two-line card: merchant and amount on top,
+     date, category and Exclude underneath. The running balance is dropped. */
+  table, tbody{display:block}
+  thead, td:nth-child(5){display:none}
+  tbody tr{display:grid; grid-template-columns:auto minmax(0,1fr) auto; grid-template-areas:"m m a" "d c x";
+    gap:6px 10px; align-items:center; padding:11px 0; border-bottom:.5px solid var(--line)}
+  tbody td{padding:0; border:0}
+  td:nth-child(1){grid-area:d; font-size:12.5px; color:var(--muted)}
+  td:nth-child(2){grid-area:m; font-weight:500}
+  td:nth-child(3){grid-area:c; min-width:0}
+  td:nth-child(4){grid-area:a; font-weight:600}
+  td:nth-child(6){grid-area:x}
+  .pill{max-width:100%}
+}
 </style>
 
 <button class="theme" id="theme" type="button" aria-label="Switch to dark mode">
